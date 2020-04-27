@@ -1,29 +1,17 @@
 import scrapy
 import time
 import re
+import json
 from scrapy.http import TextResponse
 import requests
 from pprint import pprint
 import gspread
 from google.oauth2.service_account import Credentials
 
-scopes = ['https://spreadsheets.google.com/feeds',
-          'https://www.googleapis.com/auth/drive']
-
-credentials = Credentials.from_service_account_file(
-    'bmlweb-d5bced2a88c6.json', scopes=scopes)
 
 TAG_RE = re.compile(r'<[^>]+>')
 
 STRING_RE = re.compile(r'^((\s?)-|>)((.*)(20(1|2)\d))')
-
-gc = gspread.authorize(credentials)
-# Open a sheet from a spreadsheet in one go
-wks = gc.open("bmlweb").sheet1
-
-# Update a range of cells using the top left corner address
-wks.update('A1', [[1, 2], [3, 4]])
-
 
 
 def remove_tags(text):
@@ -45,29 +33,40 @@ class HASSpider(scrapy.Spider):
         yield scrapy.Request(url=url, headers=self.headers, callback=self.parse)
 
     def parse(self, response):
-        titles = []
+        scopes = ['https://spreadsheets.google.com/feeds',
+                  'https://www.googleapis.com/auth/drive']
+
+        credentials = Credentials.from_service_account_file(
+            'bmlweb-d5bced2a88c6.json', scopes=scopes)
+        gc = gspread.authorize(credentials)
+# Open a sheet from a spreadsheet in one go
+        wks = gc.open("bmlweb").sheet1
+
+        i = 0
+        j = 1
+        k = 0
+        batch = []
 
         full_text = response.xpath('//td[3]').extract()
 
         for text in full_text:
             lines = text.split('<br>')
+            articles = []
             for line in lines:
-                comment = {}
+                comment = []
                 raw_line = remove_tags(line).replace(
                     '\n', '').replace('\t', '')
 
                 if 'href="' in line:
                     url = line.split('href="')[1].split('"')[0]
-                    comment['url'] = url
 
                 correct_line = (STRING_RE.findall(raw_line))
                 if not correct_line:
                     continue
 
-                online_data = correct_line[0][2].split('-')[-1]
-                if '–' in online_data:
-                    online_data = correct_line[0][2].split('–')[-1]
-                comment['online_data'] = online_data
+                online_date = correct_line[0][2].split('-')[-1]
+                if '–' in online_date:
+                    online_date = correct_line[0][2].split('–')[-1]
 
                 raw_source = re.findall(r'(\(\w+\))', correct_line[0][2])
                 source = ''
@@ -77,6 +76,32 @@ class HASSpider(scrapy.Spider):
                         ' - ')[0].split(source)[0]
                 else:
                     title = correct_line[0][2].split(
-                        ' - ')[0].split(online_data)[0]
-                comment['title'] = title
-                comment['source'] = source
+                        ' - ')[0].split(online_date)[0]
+                comment.append(title)
+                comment.append('')
+                comment.append('')
+                comment.append(url)
+                comment.append(source)
+                comment.append(online_date)
+                if comment != []:
+                    articles.append(comment)
+                    k += 1
+                batch += articles
+                articles = []
+                if len(batch) > 900:
+                    print(len(batch))
+                    wks.batch_update([{
+                        'range': f'A2:F{2+len(batch)}',
+                        'values': batch,
+                    }])
+                    wks = gc.open("bmlweb").get_worksheet(j)
+                    j += 1
+                    batch = []
+        wks.batch_update([{
+            'range': f'A2:F{2+len(batch)}',
+            'values': batch,
+        }])
+        wks = gc.open("bmlweb").get_worksheet(j)
+        j += 1
+        batch = []
+        print(k)
