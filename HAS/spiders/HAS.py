@@ -42,18 +42,21 @@ class HASSpider(scrapy.Spider):
 # Open a sheet from a spreadsheet in one go
         wks = gc.open("bmlweb").sheet1
 
-        i = 0
         j = 1
-        k = 0
         batch = []
 
-        full_text = response.xpath('//td[3]').extract()
+        columns = response.xpath('//tr')
+        for column in columns[2:]:
+            left_column = column.xpath('.//td[1]').extract_first()
+            text = column.xpath('.//td[3]').extract_first()
 
-        for text in full_text:
-            lines = text.split('<br>')
+            if text:
+                lines = text.split('<br>')
             articles = []
             for line in lines:
                 comment = []
+                comment.append(remove_tags(left_column))
+
                 raw_line = remove_tags(line).replace(
                     '\n', '').replace('\t', '')
 
@@ -71,7 +74,7 @@ class HASSpider(scrapy.Spider):
                 raw_source = re.findall(r'(\(\w+\))', correct_line[0][2])
                 source = ''
                 if raw_source:
-                    source = raw_source[-1]
+                    source = raw_source[-1].strip('(').strip(')')
                     title = correct_line[0][2].split(
                         ' - ')[0].split(source)[0]
                 else:
@@ -83,25 +86,17 @@ class HASSpider(scrapy.Spider):
                 comment.append(url)
                 comment.append(source)
                 comment.append(online_date)
-                if comment != []:
+                if title and url and source and online_date:
                     articles.append(comment)
-                    k += 1
-                batch += articles
-                articles = []
-                if len(batch) > 900:
-                    print(len(batch))
-                    wks.batch_update([{
-                        'range': f'A2:F{2+len(batch)}',
-                        'values': batch,
-                    }])
-                    wks = gc.open("bmlweb").get_worksheet(j)
-                    j += 1
-                    batch = []
-        wks.batch_update([{
-            'range': f'A2:F{2+len(batch)}',
-            'values': batch,
-        }])
-        wks = gc.open("bmlweb").get_worksheet(j)
-        j += 1
-        batch = []
-        print(k)
+
+            batch += articles
+            articles = []
+            if len(batch) > 900:
+                print(len(batch))
+                wks.batch_update([{
+                    'range': f'A2:I{2+len(batch)}',
+                    'values': batch,
+                }])
+                wks = gc.open("bmlweb").get_worksheet(j)
+                j += 1
+                batch = []
